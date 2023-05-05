@@ -1487,11 +1487,13 @@ static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
     // The secret file does not actually contain information for a time-based
     // code. Return to caller and see if any other authentication methods
     // apply.
+    // log_message(LOG_ERR, pamh, "CTC: bail w/ !is_totp(*buf)");
     return 1;
   }
 
   if (code < 0 || code >= 1000000) {
     // All time based verification codes are no longer than six digits.
+    // log_message(LOG_ERR, pamh, "CTC: bail w/ code < 0 || code >= 1000000");
     return 1;
   }
 
@@ -1518,7 +1520,9 @@ static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
   }
   for (int i = -((window-1)/2); i <= window/2; ++i) {
     const unsigned int hash = compute_code(secret, secretLen, tm + skew + i);
+    // log_message(LOG_ERR, pamh, "Compare window hash... %d vs %d", hash, (unsigned int)code);
     if (hash == (unsigned int)code) {
+      // log_message(LOG_ERR, pamh, "Defer to invalidate_timebased_code()");
       return invalidate_timebased_code(tm + skew + i, pamh, secret_filename,
                                        updated, buf);
     }
@@ -1549,6 +1553,7 @@ static int check_timebased_code(pam_handle_t *pamh, const char*secret_filename,
     }
   }
 
+  // log_message(LOG_ERR, pamh, "CTC: bail by default");
   return 1;
 }
 
@@ -1885,6 +1890,7 @@ static int google_authenticator(pam_handle_t *pamh,
     if (buf) {
       if (rate_limit(pamh, secret_filename, &early_updated, &buf) >= 0) {
         secret = get_shared_secret(pamh, &params, secret_filename, buf, &secretLen);
+        // log_message(LOG_ERR, pamh, "Got secret...");
       } else {
         stopped_by_rate_limit=1;
       }
@@ -1918,6 +1924,7 @@ static int google_authenticator(pam_handle_t *pamh,
     int must_advance_counter = 0;
     char *pw = NULL, *saved_pw = NULL;
     for (int mode = 0; mode < 4; ++mode) {
+      // log_message(LOG_ERR, pamh, "Inner loop, mode=%d", mode);
       // In the case of TRY_FIRST_PASS, we don't actually know whether we
       // get the verification code from the system password or from prompting
       // the user. We need to attempt both.
@@ -1932,12 +1939,14 @@ static int google_authenticator(pam_handle_t *pamh,
           free(pw);
           pw = NULL;
         }
+        // log_message(LOG_ERR, pamh, "Set error #1");
         rc = PAM_AUTH_ERR;
         break;
       }
       switch (mode) {
       case 0: // Extract possible verification code
       case 1: // Extract possible scratch code
+        // log_message(LOG_ERR, pamh, "Extract code logic");
         if (params.pass_mode == USE_FIRST_PASS ||
             params.pass_mode == TRY_FIRST_PASS) {
           pw = get_first_pass(pamh);
@@ -1946,11 +1955,13 @@ static int google_authenticator(pam_handle_t *pamh,
       default:
         if (mode != 2 && // Prompt for pw and possible verification code
             mode != 3) { // Prompt for pw and possible scratch code
+          // log_message(LOG_ERR, pamh, "Set error #2");
           rc = PAM_AUTH_ERR;
           continue;
         }
         if (params.pass_mode == PROMPT ||
             params.pass_mode == TRY_FIRST_PASS) {
+          // log_message(LOG_ERR, pamh, "Punt to other code...");
           if (!saved_pw) {
             // If forwarding the password to the next stacked PAM module,
             // we cannot tell the difference between an eight digit scratch
@@ -1966,6 +1977,7 @@ static int google_authenticator(pam_handle_t *pamh,
         break;
       }
       if (!pw) {
+        // log_message(LOG_ERR, pamh, "Iterate if no password...");
         continue;
       }
 
@@ -1989,6 +2001,7 @@ static int google_authenticator(pam_handle_t *pamh,
           // scratch codes are eight digits starting with '1'..'9'
           (ch = pw[pw_len - expected_len]) > '9' ||
           ch < (expected_len == 8 ? '1' : '0')) {
+        // log_message(LOG_ERR, pamh, "Invalid password...");
       invalid:
         explicit_bzero(pw, pw_len);
         free(pw);
@@ -1999,6 +2012,7 @@ static int google_authenticator(pam_handle_t *pamh,
       errno = 0;
       const long l = strtol(pw + pw_len - expected_len, &endptr, 10);
       if (errno || l < 0 || *endptr) {
+        // log_message(LOG_ERR, pamh, "Invalid password #2...");
         goto invalid;
       }
       const int code = (int)l;
@@ -2010,6 +2024,7 @@ static int google_authenticator(pam_handle_t *pamh,
         // therefore verify that the user entered just the verification
         // code, but no password.
         if (*pw) {
+          // log_message(LOG_ERR, pamh, "Invalid password #3...");
           goto invalid;
         }
       }
@@ -2017,10 +2032,12 @@ static int google_authenticator(pam_handle_t *pamh,
       // Only if we actually have a secret will we try to verify the code
       // In all other cases will we just remain at PAM_AUTH_ERR
       if (secret) {
+        // log_message(LOG_ERR, pamh, "All the secret checks...");
         // Check all possible types of verification codes.
         switch (check_scratch_codes(pamh, &params, secret_filename, &updated, buf, code)) {
         case 1:
           if (hotp_counter > 0) {
+            // log_message(LOG_ERR, pamh, "HOTP counter - mistake...");
             switch (check_counterbased_code(pamh, secret_filename, &updated,
                                             &buf, secret, secretLen, code,
                                             hotp_counter,
@@ -2037,19 +2054,24 @@ static int google_authenticator(pam_handle_t *pamh,
             switch (check_timebased_code(pamh, secret_filename, &updated, &buf,
                                          secret, secretLen, code, &params)) {
             case 0:
+              // log_message(LOG_ERR, pamh, "CheckTimeCode case 0 - success");
               rc = PAM_SUCCESS;
               break;
             case 1:
+              // log_message(LOG_ERR, pamh, "CheckTimeCode case 1 - invalid");
               goto invalid;
             default:
+              // log_message(LOG_ERR, pamh, "CheckTimeCode case DEFAULT - bail");
               break;
             }
           }
           break;
         case 0:
+          // log_message(LOG_ERR, pamh, "CheckScratchCode case 0 - success");
           rc = PAM_SUCCESS;
           break;
         default:
+          // log_message(LOG_ERR, pamh, "CheckScratchCode case DEFAULT - bail");
           break;
         }
 
@@ -2062,6 +2084,7 @@ static int google_authenticator(pam_handle_t *pamh,
     // code from the end of the password.
     if (rc == PAM_SUCCESS && params.forward_pass) {
       if (!pw || pam_set_item(pamh, PAM_AUTHTOK, pw) != PAM_SUCCESS) {
+        // log_message(LOG_ERR, pamh, "Set error #3");
         rc = PAM_AUTH_ERR;
       }
     }
@@ -2082,6 +2105,7 @@ static int google_authenticator(pam_handle_t *pamh,
       char counter_str[40];
       snprintf(counter_str, sizeof counter_str, "%ld", hotp_counter + 1);
       if (set_cfg_value(pamh, "HOTP_COUNTER", counter_str, &buf) < 0) {
+        // log_message(LOG_ERR, pamh, "Set error #4");
         rc = PAM_AUTH_ERR;
       }
       updated = 1;
@@ -2109,6 +2133,7 @@ static int google_authenticator(pam_handle_t *pamh,
   // case the PAM config considers this module "sufficient".
   // (or more complex equivalents)
   if (params.nullok == SECRETNOTFOUND) {
+    // log_message(LOG_ERR, pamh, "Set error #5");
     rc = PAM_IGNORE;
   }
 
@@ -2133,6 +2158,7 @@ static int google_authenticator(pam_handle_t *pamh,
       // allow user to login.
       if (!params.allow_readonly) {
         // Could not persist new state. Deny access.
+        // log_message(LOG_ERR, pamh, "Set error #6");
         rc = PAM_AUTH_ERR;
       }
     }

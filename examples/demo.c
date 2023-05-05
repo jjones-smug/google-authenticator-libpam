@@ -16,7 +16,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 //
-#include "config.h"
+// #include "config.h"
 
 #include <assert.h>
 #include <fcntl.h>
@@ -36,6 +36,12 @@
 // FreeBSD does not know about PAM_BAD_ITEM. And PAM_SYMBOL_ERR is an "enum",
 // we can't test for it at compile-time.
 #define PAM_BAD_ITEM PAM_SYMBOL_ERR
+#endif
+
+#ifdef sun
+#define PAM_CONST
+#else
+#define PAM_CONST const
 #endif
 
 static struct termios old_termios;
@@ -80,12 +86,6 @@ static int conversation(int num_msg, PAM_CONST struct pam_message **msg,
   }
   return PAM_CONV_ERR;
 }
-
-#ifdef sun
-#define PAM_CONST
-#else
-#define PAM_CONST const
-#endif
 
 int pam_get_user(pam_handle_t *pamh, PAM_CONST char **user,
                  const char *prompt) {
